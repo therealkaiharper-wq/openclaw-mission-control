@@ -2,6 +2,8 @@ import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 
 const SYSTEM_AGENT_NAME = "OpenClaw";
+// Tools that reliably indicate coding work (write excluded — it's used for markdown/docs too)
+const CODING_TOOLS = ["edit", "exec", "bash", "run", "process"];
 
 function formatDuration(ms: number): string {
 	const seconds = Math.floor(ms / 1000);
@@ -43,10 +45,26 @@ export const receiveAgentEvent = mutation({
 	},
 	handler: async (ctx, args) => {
 		// Find existing task by runId
-		const task = await ctx.db
+		let task = await ctx.db
 			.query("tasks")
 			.filter((q) => q.eq(q.field("openclawRunId"), args.runId))
 			.first();
+
+		// Fallback: find by sessionKey (e.g. "agent:main:mission:<taskId>")
+		if (!task && args.sessionKey) {
+			const match = args.sessionKey.match(/mission:(.+)$/);
+			if (match) {
+				const taskId = ctx.db.normalizeId("tasks", match[1]);
+				if (taskId) {
+					const candidate = await ctx.db.get(taskId);
+					if (candidate) {
+						task = candidate;
+						// Link the runId for future lookups
+						await ctx.db.patch(task._id, { openclawRunId: args.runId });
+					}
+				}
+			}
+		}
 
 		// Find or create system agent
 		let systemAgent = await ctx.db
@@ -118,8 +136,8 @@ export const receiveAgentEvent = mutation({
 					startedAt: now,
 				});
 			} else {
-				// Update start time for existing task
-				await ctx.db.patch(task._id, { startedAt: now });
+				// Update start time for existing task and reset coding tools flag
+				await ctx.db.patch(task._id, { startedAt: now, usedCodingTools: false });
 			}
 		} else if (args.action === "progress" && task && agent) {
 			await ctx.db.insert("messages", {
@@ -128,8 +146,38 @@ export const receiveAgentEvent = mutation({
 				content: args.message || "Progress update",
 				attachments: [],
 			});
+
+			// Flag coding tool usage based on tool:start events
+			if (args.eventType === "tool:start" && args.message && !task.usedCodingTools) {
+				const toolMatch = args.message.match(/Using tool:\s*(\S+)/);
+				if (toolMatch && CODING_TOOLS.includes(toolMatch[1])) {
+					await ctx.db.patch(task._id, { usedCodingTools: true });
+				}
+			}
 		} else if (args.action === "end" && task) {
-			await ctx.db.patch(task._id, { status: "done" });
+			// Move to review if:
+			// - The agent asks a question (needs user feedback), or
+			// - Coding tools (edit, exec, bash) were used, or
+			// - Code-type documents were created for this task
+			// Otherwise, mark as done.
+			const needsFeedback = args.response ? args.response.includes("?") : false;
+
+			let isCodingTask = task.usedCodingTools ?? false;
+			if (!isCodingTask) {
+				const codeDocs = await ctx.db
+					.query("documents")
+					.filter((q) =>
+						q.and(
+							q.eq(q.field("taskId"), task._id),
+							q.eq(q.field("type"), "code")
+						)
+					)
+					.first();
+				isCodingTask = codeDocs !== null;
+			}
+
+			const endStatus = needsFeedback || isCodingTask ? "review" : "done";
+			await ctx.db.patch(task._id, { status: endStatus });
 
 			// Calculate duration
 			const startTime = task.startedAt || task._creationTime;
@@ -138,7 +186,8 @@ export const receiveAgentEvent = mutation({
 
 			if (agent) {
 				// Include the response and duration in the completion message
-				let completionMsg = `✅ **Completed** in **${durationStr}**`;
+				const icon = needsFeedback ? "❓" : "✅";
+				let completionMsg = `${icon} **${needsFeedback ? "Needs Input" : "Completed"}** in **${durationStr}**`;
 				if (args.response) {
 					completionMsg += `\n\n${args.response}`;
 				}
@@ -153,7 +202,7 @@ export const receiveAgentEvent = mutation({
 				await ctx.db.insert("activities", {
 					type: "status_update",
 					agentId: agent._id,
-					message: `completed "${task.title}" in ${durationStr}`,
+					message: `${needsFeedback ? "needs input on" : "completed"} "${task.title}" in ${durationStr}`,
 					targetId: task._id,
 				});
 			}

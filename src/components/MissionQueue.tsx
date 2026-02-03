@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useConvex } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { IconArchive } from "@tabler/icons-react";
@@ -67,7 +67,9 @@ const MissionQueue: React.FC<MissionQueueProps> = ({ selectedTaskId, onSelectTas
 	const agents = useQuery(api.queries.listAgents);
 	const archiveTask = useMutation(api.tasks.archiveTask);
 	const updateStatus = useMutation(api.tasks.updateStatus);
+	const linkRun = useMutation(api.tasks.linkRun);
 	const [showArchived, setShowArchived] = useState(false);
+	const convex = useConvex();
 	const [activeTask, setActiveTask] = useState<Task | null>(null);
 
 	const currentUserAgent = agents?.find(a => a.name === "Manish");
@@ -127,6 +129,60 @@ const MissionQueue: React.FC<MissionQueueProps> = ({ selectedTaskId, onSelectTas
 		if (currentUserAgent) {
 			archiveTask({ taskId, agentId: currentUserAgent._id });
 		}
+	};
+
+	const buildPrompt = async (task: Task) => {
+		let prompt = task.description && task.description !== task.title
+			? `${task.title}\n\n${task.description}`
+			: task.title;
+
+		const messages = await convex.query(api.queries.listMessages, { taskId: task._id });
+		if (messages && messages.length > 0) {
+			const sorted = [...messages].sort((a, b) => a._creationTime - b._creationTime);
+			const thread = sorted.map(m => `[${m.agentName}]: ${m.content}`).join("\n\n");
+			prompt += `\n\n---\nConversation:\n${thread}\n---\nContinue working on this task based on the conversation above.`;
+		}
+
+		return prompt;
+	};
+
+	const triggerAgent = async (taskId: Id<"tasks">, message: string) => {
+		try {
+			const res = await fetch("/hooks/agent", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"Authorization": `Bearer ${import.meta.env.VITE_OPENCLAW_HOOK_TOKEN || ""}`,
+				},
+				body: JSON.stringify({
+					message,
+					sessionKey: `mission:${taskId}`,
+					name: "MissionControl",
+					wakeMode: "now",
+				}),
+			});
+
+			if (res.ok) {
+				const data = await res.json();
+				if (data.runId) {
+					await linkRun({ taskId, openclawRunId: data.runId });
+				}
+			}
+		} catch (err) {
+			console.error("[MissionQueue] Failed to trigger openclaw agent:", err);
+		}
+	};
+
+	const handlePlay = async (taskId: Id<"tasks">) => {
+		if (!currentUserAgent) return;
+
+		await updateStatus({ taskId, status: "in_progress", agentId: currentUserAgent._id });
+
+		const task = tasks.find((t) => t._id === taskId);
+		if (!task) return;
+
+		const message = await buildPrompt(task as Task);
+		await triggerAgent(taskId, message);
 	};
 
 	const displayColumns = showArchived ? [...columns, archivedColumn] : columns;
@@ -191,6 +247,7 @@ const MissionQueue: React.FC<MissionQueueProps> = ({ selectedTaskId, onSelectTas
 										columnId={col.id}
 										currentUserAgentId={currentUserAgent?._id}
 										onArchive={handleArchive}
+										onPlay={handlePlay}
 									/>
 								))}
 						</KanbanColumn>

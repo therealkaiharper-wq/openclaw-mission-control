@@ -2,12 +2,13 @@ import React, { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
-import { IconX, IconCheck, IconUser, IconTag, IconMessage, IconClock, IconFileText, IconCopy, IconCalendar, IconArchive } from "@tabler/icons-react";
+import { IconX, IconCheck, IconUser, IconTag, IconMessage, IconClock, IconFileText, IconCopy, IconCalendar, IconArchive, IconPlayerPlay } from "@tabler/icons-react";
 import ReactMarkdown from "react-markdown";
 
 interface TaskDetailPanelProps {
   taskId: Id<"tasks"> | null;
   onClose: () => void;
+  onPreviewDocument?: (docId: Id<"documents">) => void;
 }
 
 const statusColors: Record<string, string> = {
@@ -28,7 +29,7 @@ const statusLabels: Record<string, string> = {
   archived: "ARCHIVED",
 };
 
-const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) => {
+const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose, onPreviewDocument }) => {
   const tasks = useQuery(api.queries.listTasks);
   const agents = useQuery(api.queries.listAgents);
   const resources = useQuery(api.documents.listByTask, taskId ? { taskId } : "skip");
@@ -41,6 +42,7 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
   const archiveTask = useMutation(api.tasks.archiveTask);
   const sendMessage = useMutation(api.messages.send);
   const createDocument = useMutation(api.documents.create);
+  const linkRun = useMutation(api.tasks.linkRun);
 
   const task = tasks?.find((t) => t._id === taskId);
   const currentUserAgent = agents?.find(a => a.name === "Manish");
@@ -127,6 +129,73 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
     });
     setCommentText("");
     setSelectedAttachmentIds([]);
+  };
+
+  const handleResume = async () => {
+    if (!currentUserAgent || !task) return;
+
+    // Send comment first if there's text
+    const trimmed = commentText.trim();
+    if (trimmed) {
+      await sendMessage({
+        taskId: task._id,
+        agentId: currentUserAgent._id,
+        content: trimmed,
+        attachments: selectedAttachmentIds,
+      });
+      setCommentText("");
+      setSelectedAttachmentIds([]);
+    }
+
+    // Move task to in_progress
+    await updateStatus({ taskId: task._id, status: "in_progress", agentId: currentUserAgent._id });
+
+    // Build prompt with full conversation context
+    let prompt = task.description && task.description !== task.title
+      ? `${task.title}\n\n${task.description}`
+      : task.title;
+
+    // Include all comments (plus the one we just sent)
+    const allMessages = sortedMessages.slice();
+    if (trimmed) {
+      allMessages.push({
+        _id: "" as any,
+        _creationTime: Date.now(),
+        agentName: currentUserAgent.name,
+        content: trimmed,
+      } as any);
+    }
+
+    if (allMessages.length > 0) {
+      const thread = allMessages.map(m => `[${m.agentName}]: ${m.content}`).join("\n\n");
+      prompt += `\n\n---\nConversation:\n${thread}\n---\nContinue working on this task based on the conversation above.`;
+    }
+
+    // Trigger the agent
+    try {
+      const res = await fetch("/hooks/agent", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${import.meta.env.VITE_OPENCLAW_HOOK_TOKEN || ""}`,
+        },
+        body: JSON.stringify({
+          message: prompt,
+          sessionKey: `mission:${task._id}`,
+          name: "MissionControl",
+          wakeMode: "now",
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.runId) {
+          await linkRun({ taskId: task._id, openclawRunId: data.runId });
+        }
+      }
+    } catch (err) {
+      console.error("[TaskDetailPanel] Failed to trigger openclaw agent:", err);
+    }
   };
 
   const resetNewDocForm = () => {
@@ -354,7 +423,7 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
                 <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Resources / Deliverables</label>
                 <div className="space-y-1">
                     {resources.map((doc) => (
-                        <div key={doc._id} className="flex items-center justify-between p-1.5 bg-white border border-border rounded text-sm hover:bg-muted transition-colors cursor-pointer">
+                        <div key={doc._id} onClick={() => onPreviewDocument?.(doc._id)} className="flex items-center justify-between p-1.5 bg-white border border-border rounded text-sm hover:bg-muted transition-colors cursor-pointer">
                             <div className="flex items-center gap-2 overflow-hidden">
                                 <IconFileText size={14} className="text-muted-foreground shrink-0" />
                                 <div className="flex flex-col min-w-0">
@@ -536,7 +605,7 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
               disabled={!currentUserAgent}
               className="w-full min-h-[80px] p-2.5 text-sm border border-border rounded bg-white text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)] disabled:opacity-50"
             />
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
               <button
                 onClick={sendComment}
                 disabled={!currentUserAgent || commentText.trim().length === 0}
@@ -544,6 +613,16 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
               >
                 Send Comment
               </button>
+              {task.status === "review" && (
+                <button
+                  onClick={handleResume}
+                  disabled={!currentUserAgent}
+                  className="px-4 py-2 text-xs bg-[var(--accent-green)] text-white rounded font-semibold hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <IconPlayerPlay size={14} />
+                  Resume
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -34,6 +34,7 @@ export default defineSchema({
 		sessionKey: v.optional(v.string()),
 		openclawRunId: v.optional(v.string()),
 		startedAt: v.optional(v.number()),
+		usedCodingTools: v.optional(v.boolean()),
 	}),
 	messages: defineTable({
 		taskId: v.id("tasks"),

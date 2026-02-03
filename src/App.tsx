@@ -10,6 +10,7 @@ import RightSidebar from "./components/RightSidebar";
 import TrayContainer from "./components/Trays/TrayContainer";
 import SignInForm from "./components/SignIn";
 import TaskDetailPanel from "./components/TaskDetailPanel";
+import AddTaskModal from "./components/AddTaskModal";
 
 export default function App() {
 	const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
@@ -38,6 +39,8 @@ export default function App() {
 		return () => document.removeEventListener("keydown", onKeyDown);
 	}, [closeSidebars, isAnySidebarOpen]);
 	const [selectedTaskId, setSelectedTaskId] = useState<Id<"tasks"> | null>(null);
+	const [showAddTaskModal, setShowAddTaskModal] = useState(false);
+	const [addTaskPreselectedAgentId, setAddTaskPreselectedAgentId] = useState<string | undefined>(undefined);
 
 	// Document tray state
 	const [selectedDocumentId, setSelectedDocumentId] = useState<Id<"documents"> | null>(null);
@@ -104,6 +107,10 @@ export default function App() {
 					<AgentsSidebar
 						isOpen={isLeftSidebarOpen}
 						onClose={() => setIsLeftSidebarOpen(false)}
+						onAddTask={(preselectedAgentId) => {
+							setAddTaskPreselectedAgentId(preselectedAgentId);
+							setShowAddTaskModal(true);
+						}}
 					/>
 					<MissionQueue
 						selectedTaskId={selectedTaskId}
@@ -124,6 +131,20 @@ export default function App() {
 						onClosePreview={handleClosePreview}
 						onOpenPreview={handleOpenPreview}
 					/>
+					{showAddTaskModal && (
+						<AddTaskModal
+							onClose={() => {
+								setShowAddTaskModal(false);
+								setAddTaskPreselectedAgentId(undefined);
+							}}
+							onCreated={(taskId) => {
+								setShowAddTaskModal(false);
+								setAddTaskPreselectedAgentId(undefined);
+								setSelectedTaskId(taskId);
+							}}
+							initialAssigneeId={addTaskPreselectedAgentId}
+						/>
+					)}
           {selectedTaskId && (
 						<>
 							<div
@@ -134,6 +155,7 @@ export default function App() {
 							<TaskDetailPanel
 								taskId={selectedTaskId}
 								onClose={() => setSelectedTaskId(null)}
+								onPreviewDocument={handlePreviewDocument}
 							/>
 						</>
 					)}

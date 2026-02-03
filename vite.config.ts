@@ -44,6 +44,14 @@ export default defineConfig({
 			},
 		},
 	],
+	server: {
+		proxy: {
+			"/hooks": {
+				target: "http://127.0.0.1:18789",
+				changeOrigin: true,
+			},
+		},
+	},
 	resolve: {
 		alias: {
 			"@": path.resolve(__dirname, "./src"),
