@@ -23,15 +23,23 @@ export const receiveAgentEvent = mutation({
 	args: {
 		runId: v.string(),
 		action: v.string(),
-		sessionKey: v.optional(v.string()),
-		agentId: v.optional(v.string()),
-		timestamp: v.optional(v.string()),
-		error: v.optional(v.string()),
-		prompt: v.optional(v.string()),
-		source: v.optional(v.string()),
-		message: v.optional(v.string()),
-		response: v.optional(v.string()),
-		eventType: v.optional(v.string()),
+		sessionKey: v.optional(v.union(v.string(), v.null())),
+		agentId: v.optional(v.union(v.string(), v.null())),
+		timestamp: v.optional(v.union(v.string(), v.null())),
+		error: v.optional(v.union(v.string(), v.null())),
+		prompt: v.optional(v.union(v.string(), v.null())),
+		source: v.optional(v.union(v.string(), v.null())),
+		message: v.optional(v.union(v.string(), v.null())),
+		response: v.optional(v.union(v.string(), v.null())),
+		eventType: v.optional(v.union(v.string(), v.null())),
+		document: v.optional(
+			v.object({
+				title: v.string(),
+				content: v.string(),
+				type: v.string(),
+				path: v.optional(v.string()),
+			})
+		),
 	},
 	handler: async (ctx, args) => {
 		// Find existing task by runId
@@ -81,7 +89,7 @@ export const receiveAgentEvent = mutation({
 					status: "in_progress",
 					assigneeIds: agent ? [agent._id] : [],
 					tags: ["openclaw"],
-					sessionKey: args.sessionKey,
+					sessionKey: args.sessionKey ?? undefined,
 					openclawRunId: args.runId,
 					startedAt: now,
 				});
@@ -170,6 +178,39 @@ export const receiveAgentEvent = mutation({
 					agentId: agent._id,
 					message: `error on "${task.title}" after ${durationStr}`,
 					targetId: task._id,
+				});
+			}
+		} else if (args.action === "document" && args.document && agent) {
+			// Create document linked to the task
+			const docId = await ctx.db.insert("documents", {
+				title: args.document.title,
+				content: args.document.content,
+				type: args.document.type,
+				path: args.document.path,
+				taskId: task?._id,
+				createdByAgentId: agent._id,
+			});
+
+			// Add activity for document creation
+			let activityMsg = `created document "${args.document.title}"`;
+			if (task) {
+				activityMsg += ` for "${task.title}"`;
+			}
+
+			await ctx.db.insert("activities", {
+				type: "document_created",
+				agentId: agent._id,
+				message: activityMsg,
+				targetId: task?._id,
+			});
+
+			// If there's an associated task, add a comment about the document
+			if (task) {
+				await ctx.db.insert("messages", {
+					taskId: task._id,
+					fromAgentId: agent._id,
+					content: `📄 Created document: **${args.document.title}**\n\nType: ${args.document.type}${args.document.path ? `\nPath: \`${args.document.path}\`` : ""}`,
+					attachments: [docId],
 				});
 			}
 		}
