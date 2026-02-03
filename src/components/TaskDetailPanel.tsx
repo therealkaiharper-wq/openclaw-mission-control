@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -35,12 +35,21 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
   const updateStatus = useMutation(api.tasks.updateStatus);
   const updateAssignees = useMutation(api.tasks.updateAssignees);
   const updateTask = useMutation(api.tasks.updateTask);
+  const sendMessage = useMutation(api.messages.send);
+  const createDocument = useMutation(api.documents.create);
 
   const task = tasks?.find((t) => t._id === taskId);
   const currentUserAgent = agents?.find(a => a.name === "Manish");
   
   const [description, setDescription] = useState("");
   const [isEditingDesc, setIsEditingDesc] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<Array<Id<"documents">>>([]);
+  const [isAddingDoc, setIsAddingDoc] = useState(false);
+  const [newDocTitle, setNewDocTitle] = useState("");
+  const [newDocType, setNewDocType] = useState("note");
+  const [newDocPath, setNewDocPath] = useState("");
+  const [newDocContent, setNewDocContent] = useState("");
 
   useEffect(() => {
     if (task) {
@@ -78,6 +87,68 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
     }
   };
 
+  const docsById = useMemo(() => {
+    const map = new Map<string, (typeof resources)[number]>();
+    if (resources) {
+      resources.forEach((doc) => {
+        map.set(doc._id, doc);
+      });
+    }
+    return map;
+  }, [resources]);
+
+  const sortedMessages = useMemo(() => {
+    if (!messages) return [];
+    return [...messages].sort((a, b) => a._creationTime - b._creationTime);
+  }, [messages]);
+
+  const toggleAttachment = (docId: Id<"documents">) => {
+    setSelectedAttachmentIds((prev) => {
+      if (prev.includes(docId)) {
+        return prev.filter((id) => id !== docId);
+      }
+      return [...prev, docId];
+    });
+  };
+
+  const sendComment = async () => {
+    if (!currentUserAgent) return;
+    const trimmed = commentText.trim();
+    if (!trimmed) return;
+    await sendMessage({
+      taskId: task._id,
+      agentId: currentUserAgent._id,
+      content: trimmed,
+      attachments: selectedAttachmentIds,
+    });
+    setCommentText("");
+    setSelectedAttachmentIds([]);
+  };
+
+  const resetNewDocForm = () => {
+    setNewDocTitle("");
+    setNewDocType("note");
+    setNewDocPath("");
+    setNewDocContent("");
+  };
+
+  const submitNewDoc = async () => {
+    if (!currentUserAgent) return;
+    const trimmedTitle = newDocTitle.trim();
+    if (!trimmedTitle) return;
+    const docId = await createDocument({
+      title: trimmedTitle,
+      type: newDocType.trim() || "note",
+      content: newDocContent.trim(),
+      path: newDocPath.trim() || undefined,
+      taskId: task._id,
+      agentId: currentUserAgent._id,
+    });
+    setSelectedAttachmentIds((prev) => [...prev, docId]);
+    resetNewDocForm();
+    setIsAddingDoc(false);
+  };
+
   const renderAvatar = (avatar?: string) => {
     if (!avatar) return <IconUser size={10} />;
     const isUrl = avatar.startsWith("http") || avatar.startsWith("data:");
@@ -100,9 +171,9 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
   const lastUpdated = lastUpdatedActivity ? lastUpdatedActivity._creationTime : null;
 
   return (
-    <div className="fixed inset-y-0 right-0 w-[400px] bg-white border-l border-border shadow-xl transform transition-transform duration-300 ease-in-out flex flex-col z-50">
+    <div className="fixed inset-y-0 right-0 w-[380px] bg-white border-l border-border shadow-xl transform transition-transform duration-300 ease-in-out flex flex-col z-50">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-[#f8f9fa]">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-[#f8f9fa]">
         <div className="flex items-center gap-2">
           <span 
             className="w-2 h-2 rounded-full"
@@ -121,14 +192,14 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5">
         
         {/* Title */}
         <div>
-          <h2 className="text-xl font-bold text-foreground leading-tight mb-2">
+          <h2 className="text-lg font-bold text-foreground leading-tight mb-1.5">
             {task.title}
           </h2>
-          <div className="flex gap-2 mb-4">
+          <div className="flex gap-2 mb-3">
             {task.tags.map(tag => (
               <span key={tag} className="text-[10px] px-2 py-0.5 bg-muted rounded font-medium text-muted-foreground flex items-center gap-1">
                 <IconTag size={10} /> {tag}
@@ -141,7 +212,7 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
             <button
                 onClick={() => currentUserAgent && updateStatus({ taskId: task._id, status: 'done', agentId: currentUserAgent._id })}
                 disabled={!currentUserAgent}
-                className={`w-full py-2 bg-[var(--accent-green)] text-white rounded text-sm font-medium flex items-center justify-center gap-2 transition-opacity shadow-sm ${!currentUserAgent ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}
+                className={`w-full py-1.5 bg-[var(--accent-green)] text-white rounded text-xs font-medium flex items-center justify-center gap-2 transition-opacity shadow-sm ${!currentUserAgent ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}
                 title={!currentUserAgent ? "User agent not found" : "Mark as Done"}
             >
                 <IconCheck size={16} />
@@ -153,11 +224,11 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
         {/* Status */}
         <div className="space-y-1">
           <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Status</label>
-          <select 
+          <select
             value={task.status}
             onChange={handleStatusChange}
             disabled={!currentUserAgent}
-            className="w-full p-2 text-sm border border-border rounded bg-secondary text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)] disabled:opacity-50"
+            className="w-full p-1.5 text-sm border border-border rounded bg-secondary text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)] disabled:opacity-50"
           >
             {Object.entries(statusLabels).map(([key, label]) => (
               <option key={key} value={key}>{label}</option>
@@ -184,7 +255,7 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                className="w-full min-h-[100px] p-3 text-sm border border-border rounded bg-white text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]"
+                className="w-full min-h-[90px] p-2.5 text-sm border border-border rounded bg-white text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]"
               />
               <div className="flex justify-end gap-2">
                 <button 
@@ -211,7 +282,7 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
         {/* Assignees */}
         <div className="space-y-2">
           <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Assignees</label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-1.5">
             {task.assigneeIds?.map(id => {
               const agent = agents?.find(a => a._id === id);
               return (
@@ -231,9 +302,9 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
               );
             })}
             <div className="relative group">
-              <button 
+              <button
                 disabled={!currentUserAgent}
-                className="flex items-center gap-1 px-2 py-1 bg-muted border border-transparent rounded-full text-xs text-muted-foreground hover:bg-white hover:border-border transition-all disabled:opacity-50"
+                className="flex items-center gap-1 px-2 py-1 bg-muted border border-transparent rounded-full text-[11px] text-muted-foreground hover:bg-white hover:border-border transition-all disabled:opacity-50"
               >
                 <span>+ Add</span>
               </button>
@@ -266,7 +337,7 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
                 <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Resources / Deliverables</label>
                 <div className="space-y-1">
                     {resources.map((doc) => (
-                        <div key={doc._id} className="flex items-center justify-between p-2 bg-white border border-border rounded text-sm hover:bg-muted transition-colors cursor-pointer">
+                        <div key={doc._id} className="flex items-center justify-between p-1.5 bg-white border border-border rounded text-sm hover:bg-muted transition-colors cursor-pointer">
                             <div className="flex items-center gap-2 overflow-hidden">
                                 <IconFileText size={14} className="text-muted-foreground shrink-0" />
                                 <div className="flex flex-col min-w-0">
@@ -280,6 +351,183 @@ const TaskDetailPanel: React.FC<TaskDetailPanelProps> = ({ taskId, onClose }) =>
                 </div>
             </div>
         )}
+
+        {/* Comments */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Comments</label>
+            <button
+              onClick={() => setIsAddingDoc((prev) => !prev)}
+              disabled={!currentUserAgent}
+              className="text-[10px] text-[var(--accent-blue)] disabled:opacity-50"
+            >
+              {isAddingDoc ? "Close Resource" : "Add Resource"}
+            </button>
+          </div>
+
+          {sortedMessages.length === 0 && (
+            <div className="text-xs text-muted-foreground bg-muted/40 border border-border rounded p-3">
+              No comments yet. Start the conversation.
+            </div>
+          )}
+
+          {sortedMessages.length > 0 && (
+            <div className="space-y-2.5">
+              {sortedMessages.map((msg) => (
+                <div key={msg._id} className="flex gap-2 p-2.5 bg-white border border-border rounded">
+                  <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center overflow-hidden shrink-0">
+                    {renderAvatar(msg.agentAvatar)}
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span className="font-semibold text-foreground">{msg.agentName}</span>
+                      <span>{formatCreationDate(msg._creationTime)}</span>
+                    </div>
+                    <div className="text-sm text-foreground whitespace-pre-wrap">{msg.content}</div>
+                    {msg.attachments?.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {msg.attachments.map((attachmentId) => {
+                          const doc = docsById.get(attachmentId as string);
+                          return (
+                            <div
+                              key={attachmentId}
+                              className="text-[10px] px-2 py-0.5 bg-muted rounded border border-border text-muted-foreground flex items-center gap-1"
+                            >
+                              <IconFileText size={10} />
+                              <span className="font-medium">{doc?.title || "Attachment"}</span>
+                              {doc?.path && (
+                                <span className="text-[9px] text-muted-foreground font-mono truncate max-w-[120px]">
+                                  {doc.path}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Attach existing resources */}
+          {resources && resources.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {resources.map((doc) => {
+                const isSelected = selectedAttachmentIds.includes(doc._id);
+                return (
+                  <button
+                    key={doc._id}
+                    onClick={() => toggleAttachment(doc._id)}
+                    disabled={!currentUserAgent}
+                    className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                      isSelected
+                        ? "bg-[var(--accent-blue)] text-white border-[var(--accent-blue)]"
+                        : "bg-white text-muted-foreground border-border hover:bg-muted"
+                    } disabled:opacity-50`}
+                  >
+                    {doc.title}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {selectedAttachmentIds.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {selectedAttachmentIds.map((id) => {
+                const doc = docsById.get(id as string);
+                return (
+                  <div
+                    key={id}
+                    className="text-[10px] px-2 py-0.5 bg-secondary rounded text-muted-foreground flex items-center gap-1"
+                  >
+                    <IconFileText size={10} />
+                    <span className="font-medium">{doc?.title || "Attachment"}</span>
+                    <button
+                      onClick={() => toggleAttachment(id)}
+                      className="hover:text-foreground"
+                      title="Remove attachment"
+                    >
+                      <IconX size={10} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {isAddingDoc && (
+            <div className="space-y-2 p-2.5 bg-muted/40 border border-border rounded">
+              <div className="flex flex-col gap-2">
+                <input
+                  value={newDocTitle}
+                  onChange={(e) => setNewDocTitle(e.target.value)}
+                  placeholder="Document title"
+                  className="w-full p-2 text-xs border border-border rounded bg-white text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]"
+                />
+                <div className="flex gap-2">
+                  <input
+                    value={newDocType}
+                    onChange={(e) => setNewDocType(e.target.value)}
+                    placeholder="Type (note, spec, link)"
+                    className="flex-1 p-2 text-xs border border-border rounded bg-white text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]"
+                  />
+                  <input
+                    value={newDocPath}
+                    onChange={(e) => setNewDocPath(e.target.value)}
+                    placeholder="Path (optional)"
+                    className="flex-1 p-2 text-xs border border-border rounded bg-white text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]"
+                  />
+                </div>
+                <textarea
+                  value={newDocContent}
+                  onChange={(e) => setNewDocContent(e.target.value)}
+                  placeholder="Content (optional)"
+                  className="w-full min-h-[70px] p-2 text-xs border border-border rounded bg-white text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => {
+                      resetNewDocForm();
+                      setIsAddingDoc(false);
+                    }}
+                    className="px-3 py-1 text-[10px] text-muted-foreground hover:bg-muted rounded"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={submitNewDoc}
+                    disabled={!currentUserAgent || !newDocTitle.trim()}
+                    className="px-3 py-1 text-[10px] bg-foreground text-secondary rounded hover:opacity-90 disabled:opacity-50"
+                  >
+                    Add Resource
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <textarea
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              placeholder={currentUserAgent ? "Write a comment..." : "Sign in as an agent to comment"}
+              disabled={!currentUserAgent}
+              className="w-full min-h-[80px] p-2.5 text-sm border border-border rounded bg-white text-foreground focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)] disabled:opacity-50"
+            />
+            <div className="flex justify-end">
+              <button
+                onClick={sendComment}
+                disabled={!currentUserAgent || commentText.trim().length === 0}
+                className="px-4 py-2 text-xs bg-[var(--accent-blue)] text-white rounded font-semibold hover:opacity-90 disabled:opacity-50"
+              >
+                Send Comment
+              </button>
+            </div>
+          </div>
+        </div>
 
          {/* Meta */}
          <div className="mt-auto pt-6 border-t border-border flex flex-col gap-2">
