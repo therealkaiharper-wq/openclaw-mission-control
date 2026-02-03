@@ -49,6 +49,8 @@ export default defineSchema({
 		type: v.string(),
 		path: v.optional(v.string()),
 		taskId: v.optional(v.id("tasks")),
+		createdByAgentId: v.optional(v.id("agents")),
+		messageId: v.optional(v.id("messages")),
 	}),
 	notifications: defineTable({
 		mentionedAgentId: v.id("agents"),
