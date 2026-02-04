@@ -11,6 +11,8 @@ import TrayContainer from "./components/Trays/TrayContainer";
 import SignInForm from "./components/SignIn";
 import TaskDetailPanel from "./components/TaskDetailPanel";
 import AddTaskModal from "./components/AddTaskModal";
+import AddAgentModal from "./components/AddAgentModal";
+import AgentDetailTray from "./components/AgentDetailTray";
 
 export default function App() {
 	const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(false);
@@ -41,6 +43,8 @@ export default function App() {
 	const [selectedTaskId, setSelectedTaskId] = useState<Id<"tasks"> | null>(null);
 	const [showAddTaskModal, setShowAddTaskModal] = useState(false);
 	const [addTaskPreselectedAgentId, setAddTaskPreselectedAgentId] = useState<string | undefined>(undefined);
+	const [selectedAgentId, setSelectedAgentId] = useState<Id<"agents"> | null>(null);
+	const [showAddAgentModal, setShowAddAgentModal] = useState(false);
 
 	// Document tray state
 	const [selectedDocumentId, setSelectedDocumentId] = useState<Id<"documents"> | null>(null);
@@ -111,6 +115,8 @@ export default function App() {
 							setAddTaskPreselectedAgentId(preselectedAgentId);
 							setShowAddTaskModal(true);
 						}}
+						onAddAgent={() => setShowAddAgentModal(true)}
+						onSelectAgent={(agentId) => setSelectedAgentId(agentId as Id<"agents">)}
 					/>
 					<MissionQueue
 						selectedTaskId={selectedTaskId}
@@ -143,6 +149,23 @@ export default function App() {
 								setSelectedTaskId(taskId);
 							}}
 							initialAssigneeId={addTaskPreselectedAgentId}
+						/>
+					)}
+					{selectedAgentId && (
+						<div
+							className="fixed inset-0 z-[99]"
+							onClick={() => setSelectedAgentId(null)}
+							aria-hidden="true"
+						/>
+					)}
+					<AgentDetailTray
+						agentId={selectedAgentId}
+						onClose={() => setSelectedAgentId(null)}
+					/>
+					{showAddAgentModal && (
+						<AddAgentModal
+							onClose={() => setShowAddAgentModal(false)}
+							onCreated={() => setShowAddAgentModal(false)}
 						/>
 					)}
 					{selectedTaskId && (

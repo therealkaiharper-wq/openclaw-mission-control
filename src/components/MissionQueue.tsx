@@ -131,8 +131,24 @@ const MissionQueue: React.FC<MissionQueueProps> = ({ selectedTaskId, onSelectTas
 		}
 	};
 
+	const buildAgentPreamble = (task: Task) => {
+		const assignee = task.assigneeIds.length > 0
+			? agents.find(a => a._id === task.assigneeIds[0])
+			: null;
+		if (!assignee) return "";
+
+		const parts: string[] = [];
+		if (assignee.systemPrompt) parts.push(`System Prompt:\n${assignee.systemPrompt}`);
+		if (assignee.character) parts.push(`Character:\n${assignee.character}`);
+		if (assignee.lore) parts.push(`Lore:\n${assignee.lore}`);
+
+		return parts.length > 0 ? parts.join("\n\n") + "\n\n---\n\n" : "";
+	};
+
 	const buildPrompt = async (task: Task) => {
-		let prompt = task.description && task.description !== task.title
+		let prompt = buildAgentPreamble(task);
+
+		prompt += task.description && task.description !== task.title
 			? `${task.title}\n\n${task.description}`
 			: task.title;
 

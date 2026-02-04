@@ -16,6 +16,9 @@ export default defineSchema({
 		avatar: v.string(),
 		currentTaskId: v.optional(v.id("tasks")),
 		sessionKey: v.optional(v.string()),
+		systemPrompt: v.optional(v.string()),
+		character: v.optional(v.string()),
+		lore: v.optional(v.string()),
 	}),
 	tasks: defineTable({
 		title: v.string(),
